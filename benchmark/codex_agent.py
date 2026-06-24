@@ -17,7 +17,8 @@ def run_codex_agent(task: dict[str, Any], workdir: Path, logs_dir: Path) -> int:
 
     prompt = _build_prompt(task)
     model = os.environ.get("CODEX_MODEL", "gpt-5")
-    reasoning_effort = os.environ.get("CODEX_REASONING_EFFORT", "medium")
+    model_provider = os.environ.get("CODEX_MODEL_PROVIDER")
+    reasoning_effort = os.environ.get("CODEX_REASONING_EFFORT")
     output_path = logs_dir / "codex.jsonl"
 
     command = [
@@ -28,13 +29,12 @@ def run_codex_agent(task: dict[str, Any], workdir: Path, logs_dir: Path) -> int:
         "--model",
         model,
         "--json",
-        "--enable",
-        "unified_exec",
-        "-c",
-        f"model_reasoning_effort={reasoning_effort}",
-        "--",
-        prompt,
     ]
+    if model_provider:
+        command.extend(["-c", f'model_provider="{model_provider}"'])
+    if reasoning_effort:
+        command.extend(["-c", f"model_reasoning_effort={reasoning_effort}"])
+    command.extend(["--", prompt])
 
     env = _codex_env()
     with output_path.open("w", encoding="utf-8") as output:
@@ -56,7 +56,10 @@ def run_codex_agent(task: dict[str, Any], workdir: Path, logs_dir: Path) -> int:
 def _build_prompt(task: dict[str, Any]) -> str:
     expected = task["expected"]
     required_lines = "\n".join(f"- {line}" for line in expected["required_text"])
-    quoted_required = json.dumps(expected["required_text"], indent=2)
+    required_tables = "\n".join(f"- {line}" for line in expected.get("required_tables", []))
+    required_chart_labels = "\n".join(
+        f"- {line}" for line in expected.get("required_chart_labels", [])
+    )
     return f"""You are inside a Dockerized LibreOffice Writer benchmark environment.
 
 Task:
@@ -71,17 +74,18 @@ Input file:
 Required final artifact:
 /workspace/run/{expected["output_file"]}
 
-You have shell access and may use LibreOffice headless or direct ODT manipulation.
-The benchmark provides Python helpers on PYTHONPATH. The simplest valid path is:
+Shell access is disabled for this benchmark. You must operate LibreOffice Writer
+through the GUI only.
 
-python3 - <<'PY'
-from odt_utils import create_odt
-create_odt(
-    "output.odt",
-    {expected["title"]!r},
-    {quoted_required},
-)
-PY
+Use only the available computer-use tools:
+- screenshot: observe the current LibreOffice Writer window.
+- click: click a screen coordinate.
+- type_text: type text into the active GUI control.
+- key: press keyboard shortcuts such as ctrl+a, ctrl+s, alt+f, or Return.
+- wait: wait for the GUI to settle.
+
+Do not call or request bash, Python, direct ODT writing, file helpers,
+LibreOffice command-line conversion, or any non-GUI file operation.
 
 Create or edit the document so the verifier can extract the following exact content from the ODT:
 
@@ -91,11 +95,16 @@ Title:
 Required document text:
 {required_lines}
 
+Required table names:
+{required_tables}
+
+Required chart labels:
+{required_chart_labels}
+
 Important constraints:
 - Work only in the current directory.
 - Save the finished artifact exactly as /workspace/run/{expected["output_file"]}.
 - Do not modify the benchmark source files under /workspace/benchmark.
-- Before finishing, run: test -s /workspace/run/{expected["output_file"]} && ls -l /workspace/run/{expected["output_file"]}
 - When done, briefly report what file you produced.
 """
 
@@ -107,6 +116,14 @@ def _setup_codex_auth() -> None:
 
     codex_auth_b64 = os.environ.get("CODEX_AUTH_B64")
     openai_api_key = os.environ.get("OPENAI_API_KEY")
+    openrouter_api_key = os.environ.get("OPENROUTER_API_KEY")
+
+    _setup_ca_bundle()
+
+    if openrouter_api_key:
+        _write_openrouter_config()
+        _remove_codex_auth_link()
+        return
 
     if codex_auth_b64:
         decoded = subprocess.run(
@@ -121,19 +138,55 @@ def _setup_codex_auth() -> None:
         auth_path.write_text(json.dumps({"OPENAI_API_KEY": openai_api_key}, indent=2), encoding="utf-8")
     else:
         raise RuntimeError(
-            "Missing Codex auth. Set CODEX_AUTH_B64 or OPENAI_API_KEY in benchmark/.env. "
-            "Proxy variables only configure network transport."
+            "Missing Codex auth. Set OPENROUTER_API_KEY, CODEX_AUTH_B64, or OPENAI_API_KEY "
+            "in benchmark/.env."
         )
 
     auth_path.chmod(0o600)
     codex_auth_path = REMOTE_CODEX_HOME / "auth.json"
-    if codex_auth_path.exists() or codex_auth_path.is_symlink():
-        codex_auth_path.unlink()
+    _remove_codex_auth_link()
     codex_auth_path.symlink_to(auth_path)
 
-    _setup_ca_bundle()
-    _setup_proxy_env()
-    _prebind_parsewave()
+
+def _write_openrouter_config() -> None:
+    model = os.environ.get("CODEX_MODEL", "google/gemma-4-31b-it:free")
+    os.environ["CODEX_MODEL_PROVIDER"] = os.environ.get("CODEX_MODEL_PROVIDER", "openrouter")
+    config_path = REMOTE_CODEX_HOME / "config.toml"
+    config_path.write_text(
+        "\n".join(
+            [
+                f'model = "{model}"',
+                'model_provider = "openrouter"',
+                "",
+                "[model_providers.openrouter]",
+                'name = "OpenRouter"',
+                'base_url = "https://openrouter.ai/api/v1"',
+                'env_key = "OPENROUTER_API_KEY"',
+                "",
+                "[features]",
+                "shell_tool = false",
+                "",
+                "[mcp_servers.writer_environment]",
+                'command = "node"',
+                'args = ["/workspace/benchmark/mcp_gui_server.mjs"]',
+                'env = { WRITER_WORKDIR = "/workspace/run", DISPLAY = ":99" }',
+                'enabled_tools = ["screenshot", "click", "type_text", "key", "wait"]',
+                'default_tools_approval_mode = "approve"',
+                "required = true",
+                "startup_timeout_sec = 20",
+                "tool_timeout_sec = 60",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    config_path.chmod(0o600)
+
+
+def _remove_codex_auth_link() -> None:
+    codex_auth_path = REMOTE_CODEX_HOME / "auth.json"
+    if codex_auth_path.exists() or codex_auth_path.is_symlink():
+        codex_auth_path.unlink()
 
 
 def _setup_ca_bundle() -> None:
@@ -165,44 +218,6 @@ def _setup_ca_bundle() -> None:
     parsewave_only.unlink(missing_ok=True)
     ca_path.chmod(0o644)
     os.environ["SSL_CERT_FILE"] = str(ca_path)
-
-
-def _setup_proxy_env() -> None:
-    https_proxy = os.environ.get("CODEX_HTTPS_PROXY")
-    http_proxy = os.environ.get("CODEX_HTTP_PROXY")
-    if https_proxy:
-        os.environ["HTTPS_PROXY"] = https_proxy
-        os.environ["https_proxy"] = https_proxy
-    if http_proxy:
-        os.environ["HTTP_PROXY"] = http_proxy
-        os.environ["http_proxy"] = http_proxy
-
-
-def _prebind_parsewave() -> None:
-    token = os.environ.get("CODEX_PARSEWAVE_TOKEN")
-    proxy = os.environ.get("HTTPS_PROXY")
-    if not token or not proxy:
-        return
-
-    prebind_url = os.environ.get("PARSEWAVE_PREBIND_URL", "https://chatgpt.com/backend-api/me")
-    command = [
-        "curl",
-        "-sS",
-        "--fail-with-body",
-        "-x",
-        proxy,
-        "-H",
-        f"Authorization: Bearer {token}",
-        "-o",
-        "/dev/null",
-        "-w",
-        "Prebind: HTTP %{http_code}\n",
-        prebind_url,
-    ]
-    ssl_cert_file = os.environ.get("SSL_CERT_FILE")
-    if ssl_cert_file:
-        command[4:4] = ["--cacert", ssl_cert_file]
-    subprocess.run(command, check=False, text=True)
 
 
 def _codex_env() -> dict[str, str]:
@@ -243,4 +258,3 @@ def _count_codex_events(path: Path) -> int:
                 continue
             count += 1
     return count
-

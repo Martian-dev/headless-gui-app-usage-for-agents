@@ -13,9 +13,9 @@ Task
   -> Score
 ```
 
-The first target application is LibreOffice Writer. The task is intentionally
-small but more realistic than a "Hello World" title edit: Codex must produce a
-short operations handoff document and save it as `output.odt`.
+The first target application is LibreOffice Writer. The task asks Codex to build
+a quarterly business review document with multiple sections, tables, and an
+embedded chart, then save it as `output.odt`.
 
 The key design choice is deterministic verification. The benchmark does not
 judge screenshots. It opens the produced ODT file, extracts text from the
@@ -85,25 +85,25 @@ It must produce:
 The expected document title is:
 
 ```text
-Nightly Data Refresh Handoff
+Q3 Revenue Operations Review
 ```
 
-The verifier also checks for required sections such as purpose, schedule,
-validation checklist, and escalation text.
+The verifier also checks required sections, four named tables, an embedded SVG
+chart image, and chart labels such as July, August, September, Revenue, and
+Gross Margin.
 
 ## How The Codex Run Works
 
-The default Docker command runs `runner.py` in `codex-agent` mode.
+The default Docker command runs `runner.py` in `openrouter-gui-agent` mode.
 
 The flow is:
 
 1. Load `tasks/task001.yaml`.
 2. Reset `/workspace/run`.
 3. Create a fresh `starter.odt`.
-4. Start `codex exec` from `/workspace/run`.
-5. Give Codex the task instruction, input path, required output path, and exact
-   verifier expectations.
-6. Codex acts inside the container.
+4. Start the virtual GUI and open `starter.odt` in LibreOffice Writer.
+5. Send screenshots to the OpenRouter model and expose only physical GUI actions.
+6. The agent clicks, types, presses keys, waits, and screenshots inside the container.
 7. The runner verifies `/workspace/run/output.odt`.
 8. The runner prints a JSON result.
 
@@ -123,45 +123,54 @@ A successful result looks like:
 If Codex fails, the JSON includes the tail of the Codex log and the files left in
 the work directory.
 
-## How Codex Interacts With Writer
+## How The Agent Interacts With Writer
 
-This scaffold is a computer-use-plus-shell setup.
+The live default path is `openrouter-gui-agent`, a direct OpenRouter tool loop
+using `google/gemma-4-31b-it:free`.
 
-Codex has shell access inside Docker, and the environment also contains GUI
-automation primitives. That means Codex can currently solve the task in either
-of these ways:
-
-- Use LibreOffice Writer through the virtual GUI.
-- Use shell tools or Python helpers to create a valid ODT artifact directly.
-
-The prompt currently permits both approaches:
+Before Codex starts, `runner.py` launches:
 
 ```text
-You have shell access and may use LibreOffice headless or direct ODT manipulation.
+Xvfb -> fluxbox -> LibreOffice Writer
 ```
 
-This is intentional for the first milestone. The goal is to prove that the full
-benchmark loop works:
-
-```text
-Docker packaging -> Codex execution -> artifact creation -> deterministic verification
-```
-
-Once that passes consistently, the next stricter milestone is to remove or limit
-the direct ODT helper path and require actions through:
+The model receives screenshots and can call only low-level computer-use tools:
 
 ```python
 screenshot()
 click(x, y)
-type(text)
+type_text(text)
 key(key_name)
+wait(seconds)
 ```
 
-That would turn this into a more purely visual computer-use benchmark.
+No document creation helper is exposed. The agent has to observe Writer and take
+physical actions. Shell commands are not part of this loop.
 
-## Auth And Proxy Setup
+The experimental `codex-agent` mode also disables the Codex shell tool with:
 
-Live Codex runs require real Codex auth.
+```toml
+[features]
+shell_tool = false
+```
+
+In testing, Codex CLI `0.139.0` with the current OpenRouter custom-provider
+configuration accepted the MCP server config but did not surface the MCP tools
+into `codex exec`; the model attempted `screenshot` and Codex rejected it as an
+unsupported call. For true physical-action testing with OpenRouter, use the
+default `openrouter-gui-agent` mode.
+
+The deterministic verifier still evaluates the final artifact,
+`/workspace/run/output.odt`, after the agent finishes.
+
+## Auth And Provider Setup
+
+Live Codex runs need a model provider and credentials. The default setup in this
+scaffold uses OpenRouter with:
+
+```text
+google/gemma-4-31b-it:free
+```
 
 Edit:
 
@@ -169,30 +178,42 @@ Edit:
 benchmark/.env
 ```
 
-Set one auth mode:
+Set:
+
+```text
+OPENROUTER_API_KEY=...
+CODEX_MODEL_PROVIDER=openrouter
+CODEX_MODEL=google/gemma-4-31b-it:free
+```
+
+The default `openrouter-gui-agent` mode calls OpenRouter directly with
+`OPENROUTER_API_KEY`. The experimental `codex-agent` mode writes this Codex user
+config inside the container at `/tmp/codex-home/config.toml`:
+
+```toml
+model = "google/gemma-4-31b-it:free"
+model_provider = "openrouter"
+
+[model_providers.openrouter]
+name = "OpenRouter"
+base_url = "https://openrouter.ai/api/v1"
+env_key = "OPENROUTER_API_KEY"
+```
+
+That tells Codex CLI to call OpenRouter's OpenAI-compatible API instead of the
+built-in OpenAI provider. The OpenRouter key stays in the environment; it is not
+written into the config file.
+
+Alternative OpenAI/Codex auth modes are still available:
 
 ```text
 CODEX_AUTH_B64=...
-```
-
-or:
-
-```text
 OPENAI_API_KEY=...
 ```
 
 `CODEX_AUTH_B64` must be a real Codex `auth.json` encoded as one line of base64.
-Proxy variables do not replace auth.
 
-Optional proxy transport settings:
-
-```text
-CODEX_HTTPS_PROXY=...
-CODEX_HTTP_PROXY=...
-CODEX_PARSEWAVE_TOKEN=...
-```
-
-Optional private CA support:
+Optional private CA support remains available:
 
 ```text
 CODEX_CA_B64=...
@@ -213,10 +234,21 @@ Build the Docker image:
 docker build -t gym-anything-writer ./benchmark
 ```
 
-Run the live Codex-agent benchmark:
+Run the live physical GUI benchmark:
 
 ```bash
 docker run --rm --env-file benchmark/.env gym-anything-writer
+```
+
+The default image command currently runs `openrouter-gui-agent`.
+
+To explicitly run the Codex CLI MCP experiment:
+
+```bash
+docker run --rm --env-file benchmark/.env gym-anything-writer \
+  python3 /workspace/benchmark/runner.py \
+  --task /workspace/benchmark/tasks/task001.yaml \
+  --mode codex-agent
 ```
 
 Run the deterministic non-agent baseline:
@@ -251,7 +283,6 @@ env.screenshot()
 env.click(500, 300)
 env.type("Hello")
 env.key("ctrl+s")
-env.bash("ls -la")
 ```
 
 `start_gui()` launches:
@@ -265,9 +296,6 @@ correctly inside the container.
 
 ## NOTE
 
-This is already a true Codex-agent benchmark when run in `codex-agent` mode, but
-it is not yet a pure GUI-only benchmark. Because shell access is enabled, Codex
-can bypass the visible Writer UI and create the ODT directly.
-
-That is acceptable for the current stage. It validates the benchmark plumbing
-before adding stricter GUI-only constraints.
+The deterministic `shell-baseline` mode still exists as a verifier sanity check.
+It is not the agent benchmark. The live `openrouter-gui-agent` mode is the
+physical GUI test.

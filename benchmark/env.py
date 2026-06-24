@@ -38,7 +38,7 @@ class Environment:
         )
         time.sleep(0.5)
 
-        command = ["libreoffice", "--writer"]
+        command = ["libreoffice", "--writer", "--nologo", "--nofirststartwizard", "--norestore"]
         if document_path is not None:
             command.append(str(document_path))
         self._processes.append(

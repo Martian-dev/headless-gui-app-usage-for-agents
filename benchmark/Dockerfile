@@ -31,7 +31,8 @@ RUN mkdir -p "$NVM_DIR" \
 
 WORKDIR /workspace
 COPY . /workspace/benchmark
+RUN cd /workspace/benchmark && npm install --omit=dev
 
 ENV DISPLAY=:99
 
-CMD ["python3", "/workspace/benchmark/runner.py", "--task", "/workspace/benchmark/tasks/task001.yaml", "--mode", "codex-agent"]
+CMD ["python3", "/workspace/benchmark/runner.py", "--task", "/workspace/benchmark/tasks/task001.yaml", "--mode", "openrouter-gui-agent"]

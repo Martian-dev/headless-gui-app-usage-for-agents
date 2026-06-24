@@ -1,25 +1,59 @@
 id: writer_doc_001
 
 instruction: |
-  Open starter.odt in LibreOffice Writer and turn it into a concise operations
-  handoff document for the nightly data refresh. Save the finished document as
-  output.odt.
+  Build a polished LibreOffice Writer quarterly business review document from
+  the provided inputs. The document must include a title, executive summary,
+  KPI scorecard table, regional performance table, initiative roadmap table,
+  risk register table, and an embedded chart showing monthly revenue and gross
+  margin trend values. Save the finished document as output.odt.
 
 setup:
   - starter.odt
 
 expected:
   output_file: output.odt
-  title: Nightly Data Refresh Handoff
+  title: Q3 Revenue Operations Review
   required_text:
-    - "## Purpose"
-    - "Document the owner, schedule, validation checks, and escalation path for the nightly data refresh."
-    - "## Schedule"
-    - "- Runs every weekday at 02:00 UTC."
-    - "- Expected completion is before 03:15 UTC."
-    - "## Validation Checklist"
-    - "- Confirm the dashboard row count is within 5% of the previous successful run."
-    - "- Confirm no critical errors appear in refresh.log."
-    - "- Confirm the success marker file exists before sending the handoff."
-    - "## Escalation"
-    - "If validation fails, notify Data Operations and include the failing check, timestamp, and log excerpt."
+    - "## Executive Summary"
+    - "Q3 revenue operations closed above plan, with expansion revenue offsetting slower new logo conversion in the enterprise segment."
+    - "## KPI Scorecard"
+    - "Net Revenue Retention"
+    - "Pipeline Coverage"
+    - "Forecast Accuracy"
+    - "Gross Margin"
+    - "## Regional Performance"
+    - "North America"
+    - "EMEA"
+    - "APAC"
+    - "## Monthly Revenue And Margin Trend"
+    - "July"
+    - "August"
+    - "September"
+    - "Revenue"
+    - "Gross Margin"
+    - "## Strategic Initiatives"
+    - "Renewal desk automation"
+    - "Partner-sourced pipeline"
+    - "Billing exception cleanup"
+    - "## Risk Register"
+    - "Enterprise sales cycle slippage"
+    - "Data quality backlog"
+    - "Partner enablement capacity"
+    - "## Decisions Requested"
+    - "Approve two incremental data operations contractors for Q4."
+  required_tables:
+    - "KPI Scorecard"
+    - "Regional Performance"
+    - "Strategic Initiatives"
+    - "Risk Register"
+  min_tables: 4
+  required_chart_images:
+    - "Pictures/monthly_revenue_margin_chart.svg"
+  required_chart_labels:
+    - "Monthly Revenue And Margin Trend"
+    - "July"
+    - "August"
+    - "September"
+    - "Revenue"
+    - "Gross Margin"
+  min_chart_images: 1
