@@ -1,0 +1,25 @@
+id: writer_doc_001
+
+instruction: |
+  Open starter.odt in LibreOffice Writer and turn it into a concise operations
+  handoff document for the nightly data refresh. Save the finished document as
+  output.odt.
+
+setup:
+  - starter.odt
+
+expected:
+  output_file: output.odt
+  title: Nightly Data Refresh Handoff
+  required_text:
+    - "## Purpose"
+    - "Document the owner, schedule, validation checks, and escalation path for the nightly data refresh."
+    - "## Schedule"
+    - "- Runs every weekday at 02:00 UTC."
+    - "- Expected completion is before 03:15 UTC."
+    - "## Validation Checklist"
+    - "- Confirm the dashboard row count is within 5% of the previous successful run."
+    - "- Confirm no critical errors appear in refresh.log."
+    - "- Confirm the success marker file exists before sending the handoff."
+    - "## Escalation"
+    - "If validation fails, notify Data Operations and include the failing check, timestamp, and log excerpt."
